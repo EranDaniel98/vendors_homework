@@ -222,3 +222,28 @@ test('list_vulnerabilities severity enum rejects invalid values', async () => {
     await close();
   }
 });
+
+test('list_vulnerabilities rejects unknown top-level fields (.strict())', async () => {
+  const { client, close } = await setup();
+  try {
+    const res = await call(client, 'list_vulnerabilities', {
+      vendor_id: 'V1',
+      bogus_extra_field: 'x',
+    });
+    assert.equal(res.isError, true);
+    assert.match(res.content?.[0]?.text ?? '', /unrecognized|bogus_extra_field/i);
+  } finally {
+    await close();
+  }
+});
+
+test('list_vulnerabilities bad date is a clean zod validation error', async () => {
+  const { client, close } = await setup();
+  try {
+    const res = await call(client, 'list_vulnerabilities', { published_after: 'not-a-date' });
+    assert.equal(res.isError, true);
+    assert.match(res.content?.[0]?.text ?? '', /Invalid date/);
+  } finally {
+    await close();
+  }
+});

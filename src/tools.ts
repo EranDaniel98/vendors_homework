@@ -4,22 +4,18 @@ import { z } from 'zod';
 import { config, logger } from './config.js';
 import type { StatsInput, VulnerabilityStore } from './store.js';
 
-// MCP SDK 1.29.x: `inputSchema` accepts a raw zod shape (e.g. { k: z.string() })
-// OR an AnySchema (e.g. z.object({...})). We use the raw shape form throughout —
-// verified end-to-end via in-memory transport: the SDK converts the shape to a
-// ZodObject internally and emits a correct JSON Schema in tools/list.
-// Double-wrapping (passing `z.object(shape)` as inputSchema) also works in 1.29.0
-// but produces noisier types; prefer raw shape.
+// MCP SDK 1.29.x: `inputSchema` accepts either a raw zod shape or a full AnySchema.
+// We pass `z.object(shape).strict()` so that unknown top-level fields are rejected
+// by zod before the handler runs — matches the plan's `.strict()` contract and
+// catches LLM typos like `severityy`. The SDK's `AnySchema` branch accepts this
+// and emits the same JSON Schema as the raw-shape form.
 
-const isoDate = (s: string): string => {
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(`invalid date: ${s}`);
-  }
-  return d.toISOString().slice(0, 10);
-};
-
-const DateString = z.string().transform(isoDate);
+const DateString = z
+  .string()
+  .refine((s) => !Number.isNaN(new Date(s).getTime()), {
+    message: 'Invalid date — expected YYYY-MM-DD or ISO 8601',
+  })
+  .transform((s) => new Date(s).toISOString().slice(0, 10));
 const SeverityEnum = z.preprocess(
   (v) => (typeof v === 'string' ? v.toLowerCase() : v),
   z.enum(['critical', 'high', 'medium', 'low']),
@@ -34,61 +30,75 @@ const PaginationShape = {
   offset: z.number().int().min(0).optional().describe('Page offset'),
 };
 
-const VendorIdShape = {
-  vendor_id: z.string().min(1).describe('Vendor primary key, e.g. "V1"'),
-};
+const VendorIdSchema = z
+  .object({
+    vendor_id: z.string().min(1).describe('Vendor primary key, e.g. "V1"'),
+  })
+  .strict();
 
-const GetVulnShape = {
-  id: z.string().min(1).optional().describe('Internal record id, e.g. "CVE001"'),
-  cve_id: z.string().min(1).optional().describe('Official CVE identifier, e.g. "CVE-2021-44228"'),
-};
+const GetVulnSchema = z
+  .object({
+    id: z.string().min(1).optional().describe('Internal record id, e.g. "CVE001"'),
+    cve_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Official CVE identifier, e.g. "CVE-2021-44228"'),
+  })
+  .strict();
 
-const ListVulnShape = {
-  vendor_id: z.string().optional(),
-  vendor_name: z.string().optional().describe('Case-insensitive substring match on vendor name'),
-  severity: SeverityEnum.optional(),
-  status: StatusEnum.optional(),
-  title_contains: z.string().optional().describe('Case-insensitive substring match on title'),
-  cve_contains: z.string().optional().describe('Case-insensitive substring match on CVE id'),
-  affected_versions_contains: z
-    .string()
-    .optional()
-    .describe('Substring match in the free-text affected_versions field'),
-  min_cvss: z.number().min(0).max(10).optional(),
-  max_cvss: z.number().min(0).max(10).optional(),
-  published_after: DateString.optional().describe('Inclusive lower bound (YYYY-MM-DD or ISO)'),
-  published_before: DateString.optional().describe('Inclusive upper bound (YYYY-MM-DD or ISO)'),
-  year: z.number().int().optional(),
-  sort_by: z.enum(['published', 'cvss_score']).optional(),
-  sort_order: z.enum(['asc', 'desc']).optional(),
-  ...PaginationShape,
-};
+const ListVulnSchema = z
+  .object({
+    vendor_id: z.string().optional(),
+    vendor_name: z.string().optional().describe('Case-insensitive substring match on vendor name'),
+    severity: SeverityEnum.optional(),
+    status: StatusEnum.optional(),
+    title_contains: z.string().optional().describe('Case-insensitive substring match on title'),
+    cve_contains: z.string().optional().describe('Case-insensitive substring match on CVE id'),
+    affected_versions_contains: z
+      .string()
+      .optional()
+      .describe('Substring match in the free-text affected_versions field'),
+    min_cvss: z.number().min(0).max(10).optional(),
+    max_cvss: z.number().min(0).max(10).optional(),
+    published_after: DateString.optional().describe('Inclusive lower bound (YYYY-MM-DD or ISO)'),
+    published_before: DateString.optional().describe('Inclusive upper bound (YYYY-MM-DD or ISO)'),
+    year: z.number().int().optional(),
+    sort_by: z.enum(['published', 'cvss_score']).optional(),
+    sort_order: z.enum(['asc', 'desc']).optional(),
+    ...PaginationShape,
+  })
+  .strict();
 
-const ListVendorsShape = {
-  category: z.string().optional(),
-  name_contains: z.string().optional(),
-  ...PaginationShape,
-};
+const ListVendorsSchema = z
+  .object({
+    category: z.string().optional(),
+    name_contains: z.string().optional(),
+    ...PaginationShape,
+  })
+  .strict();
 
-const StatsShape = {
-  group_by: z.enum(['severity', 'status', 'vendor', 'year']),
-  filters: z
-    .object({
-      vendor_id: z.string().optional(),
-      vendor_name: z.string().optional(),
-      severity: SeverityEnum.optional(),
-      status: StatusEnum.optional(),
-      title_contains: z.string().optional(),
-      cve_contains: z.string().optional(),
-      min_cvss: z.number().min(0).max(10).optional(),
-      max_cvss: z.number().min(0).max(10).optional(),
-      published_after: DateString.optional(),
-      published_before: DateString.optional(),
-      year: z.number().int().optional(),
-    })
-    .strict()
-    .optional(),
-};
+const StatsSchema = z
+  .object({
+    group_by: z.enum(['severity', 'status', 'vendor', 'year']),
+    filters: z
+      .object({
+        vendor_id: z.string().optional(),
+        vendor_name: z.string().optional(),
+        severity: SeverityEnum.optional(),
+        status: StatusEnum.optional(),
+        title_contains: z.string().optional(),
+        cve_contains: z.string().optional(),
+        min_cvss: z.number().min(0).max(10).optional(),
+        max_cvss: z.number().min(0).max(10).optional(),
+        published_after: DateString.optional(),
+        published_before: DateString.optional(),
+        year: z.number().int().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 export function registerTools(server: McpServer, store: VulnerabilityStore): void {
   server.registerTool(
@@ -96,7 +106,7 @@ export function registerTools(server: McpServer, store: VulnerabilityStore): voi
     {
       description:
         'Fetch a single vendor by its primary id (e.g. "V1"). For searching vendors by name or category, use list_vendors.',
-      inputSchema: VendorIdShape,
+      inputSchema: VendorIdSchema,
     },
     async ({ vendor_id }) => {
       try {
@@ -114,7 +124,7 @@ export function registerTools(server: McpServer, store: VulnerabilityStore): voi
     {
       description:
         'List vendors, optionally filtered by category or substring of name. For a single vendor by id, use get_vendor.',
-      inputSchema: ListVendorsShape,
+      inputSchema: ListVendorsSchema,
     },
     async (args) => {
       try {
@@ -137,7 +147,7 @@ export function registerTools(server: McpServer, store: VulnerabilityStore): voi
     {
       description:
         'Fetch a single vulnerability by internal id OR by official cve_id (e.g. "CVE-2021-44228"). Provide exactly one. For name/title searches (e.g. "Log4Shell") use list_vulnerabilities with title_contains instead.',
-      inputSchema: GetVulnShape,
+      inputSchema: GetVulnSchema,
     },
     async ({ id, cve_id }) => {
       try {
@@ -167,7 +177,7 @@ export function registerTools(server: McpServer, store: VulnerabilityStore): voi
     {
       description:
         'Search/filter vulnerabilities. Supports vendor (id or name substring), severity, status, title/CVE/version substring, CVSS range, date range, year, and sort by published or cvss_score. For counts or aggregates, use stats instead. Responses inline vendor metadata (id, name, category) under vendor.',
-      inputSchema: ListVulnShape,
+      inputSchema: ListVulnSchema,
     },
     async (args) => {
       try {
@@ -203,7 +213,7 @@ export function registerTools(server: McpServer, store: VulnerabilityStore): voi
     {
       description:
         'Count vulnerabilities grouped by severity, status, vendor, or published year. Use this for ALL "how many" / count questions — much more efficient than fetching records and counting client-side. Supports the same filters as list_vulnerabilities (without pagination/sort).',
-      inputSchema: StatsShape,
+      inputSchema: StatsSchema,
     },
     async (args) => {
       try {
