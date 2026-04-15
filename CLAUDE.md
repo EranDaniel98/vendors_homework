@@ -12,14 +12,22 @@
 
 ```
 vendors_homework/
-  CLAUDE.md                        — this file
-  english_instruction.md           — homework spec (EN, authoritative)
-  hebrew_instruction.md            — homework spec (HE, mirror)
-  vendors.db                       — vendor master, pipe-delimited
-  vulnerabilities.db               — CVE records, pipe-delimited, FK → vendors.db
+  CLAUDE.md                         — this file
+  README.md                         — setup + tool reference + design notes
+  package.json, tsconfig.json       — project config
+  eslint.config.js, .prettierrc     — lint/format config
+  claude_desktop_config.sample.json — drop-in MCP client config
+  src/                              — TypeScript source (config, parser, store, tools, types, index)
+  tests/                            — node --test suites + fixtures
+  data/
+    vendors.db                      — vendor master, pipe-delimited
+    vulnerabilities.db              — CVE records, pipe-delimited, FK → vendors.db
+  docs/
+    DECISIONS.md                    — decision log (D1–D14)
+    english_instruction.md          — homework spec (EN, authoritative)
+    hebrew_instruction.md           — homework spec (HE, mirror)
+  .github/workflows/ci.yml          — lint + build + test on PR / main
 ```
-
-No source tree yet. MCP server code will be added by the implementer.
 
 ## 3. Backend Conventions
 

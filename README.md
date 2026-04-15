@@ -44,7 +44,7 @@ All tunables are validated at startup via zod; unknown values produce a fatal er
 
 | Name | Default | Purpose |
 |---|---|---|
-| `VULN_DB_DIR` | `<repo-root>` | Directory containing the data files. Overrides path resolution for both files at once. |
+| `VULN_DB_DIR` | `<repo-root>/data` | Directory containing the data files. Overrides path resolution for both files at once. |
 | `VENDORS_FILE` | `vendors.db` | Filename of the vendor master (relative to `VULN_DB_DIR`). |
 | `VULNS_FILE` | `vulnerabilities.db` | Filename of the vulnerability list. |
 | `SERVER_NAME` | `vulnerability-registry` | `name` field advertised to MCP clients. |
@@ -135,7 +135,7 @@ Returns `{ total, group_by, groups: [{ key, count }] }` sorted by count desc.
 
 Five focused tools instead of one generic `query` — the LLM picks from distinct semantic signatures rather than inventing a filter DSL. Vendor info is inlined into every vuln response to save round-trips. Every numeric / enum field is coerced at parse time so queries never do per-row conversion. The `# FORMAT:` header is parsed dynamically, and the spec's `# VERSION` field is surfaced — the parser never hardcodes column indexes. Strict-at-load, lenient-per-row: a missing header aborts startup, but a malformed data row is logged to stderr and skipped so one bad line can't brick the server.
 
-The full rationale — including options considered and rejected — lives in [`DECISIONS.md`](./DECISIONS.md).
+The full rationale — including options considered and rejected — lives in [`docs/DECISIONS.md`](./docs/DECISIONS.md).
 
 ## With more time
 
