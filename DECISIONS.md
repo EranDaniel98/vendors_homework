@@ -142,6 +142,8 @@ byStatus:   Map<Status, Vulnerability[]>
 
 **Gotcha documented inline in the code:** `server.registerTool(name, { inputSchema: SHAPE }, handler)` expects the raw zod shape object, **not** `z.object(...)`. Double-wrapping produces a nested schema that never validates.
 
+**Verified against @modelcontextprotocol/sdk 1.29.0 (end-to-end, in-memory transport, April 2026):** the raw shape form is correct and produces a clean JSON Schema on the wire — `{ type: "object", properties: {...}, required: [...], additionalProperties: false }`. Internally the SDK calls `z.object(shape)` on the raw shape and stores the resulting `ZodObject` on the registered tool. Passing a pre-built `z.object(...)` as `inputSchema` also type-checks in 1.29.0 (the signature is `ZodRawShapeCompat | AnySchema`) but produces a less-ergonomic callback signature — prefer the raw shape.
+
 ---
 
 ### D8 — MCP response shape: dual text + structured content
@@ -212,6 +214,16 @@ src/
 
 ---
 
+### D14 — ESLint + Prettier added during build
+
+**Chosen:** Flat-config ESLint with `@typescript-eslint/recommended`, `eslint-config-prettier`, and a critical custom rule — `no-restricted-properties` banning `process.env.*` everywhere except `src/config.ts`. Prettier for formatting.
+
+**Rationale:** Originally rejected as "out of scope" for a 3–5h homework, but reinstated during plan-review because the project's config discipline (one and only one file may read env; nothing may write to stdout or use `console.*`) is **enforceable in CI-style tooling** almost for free. The ESLint rule is the load-bearing guard rail: strip it and the invariant rots the first time someone adds `process.env.FOO` inside a handler. The rule is verified to fire by temporarily introducing a stray `process.env` outside `src/config.ts` during final verification.
+
+**Tradeoff:** ~5 minutes of setup time. Accepted.
+
+---
+
 ### D13 — No hot-reload, restart on file change
 
 **Chosen:** Files load once at startup into the in-memory store. `fs.watch` is not used.
@@ -230,7 +242,6 @@ src/
 | Sub-year temporal grouping (quarter, month) in `stats` | Only one of twelve tested analyst questions needs it. Year-level is sufficient. |
 | Version-range parsing of `affected_versions` | Spec explicitly flags this field as free text. Parsing `"Chrome < 88.0.4324.150"`, `"Windows 7-Server 2008"`, `"SSLv3"` into structured ranges is a rabbit hole. |
 | `fs.watch` for hot-reload | Race conditions on partial writes; restart is free. |
-| ESLint + Prettier | Out of scope for a 3–5 hour homework; adds setup time that doesn't show in the final artifact. |
 | CI pipeline | Submission is a public repo only — no deployment target. |
 | `src/lib/` subdirectory | 5 files don't justify a sub-namespace. |
 
