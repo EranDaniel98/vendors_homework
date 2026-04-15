@@ -1,160 +1,260 @@
 # Vulnerability Registry MCP Server
 
-An MCP (Model Context Protocol) server that wraps a legacy pipe-delimited vulnerability registry and exposes it as tools any MCP-compatible LLM client can call. Written in TypeScript; loads the data into memory at startup and serves it over stdio.
+> Read-only MCP server over a legacy pipe-delimited CVE + vendor registry.
 
-## Requirements
+![Node](https://img.shields.io/badge/node-%3E%3D20-3c873a)
+![MCP SDK](https://img.shields.io/badge/%40modelcontextprotocol%2Fsdk-%5E1.0.4-6e40c9)
+![Tests](https://img.shields.io/badge/tests-27%20passing-brightgreen)
 
-- Node.js **>= 20** (tested on 22 and 24)
-- npm (ships with Node)
+## TL;DR
 
-## Install
+TypeScript MCP server that parses `vendors.db` and `vulnerabilities.db` (pipe-delimited, dynamic `# FORMAT:` header) into memory and serves them over stdio. Intended to be called by an MCP-compatible LLM client such as Claude Desktop. Exposes **5 tools**: `get_vendor`, `list_vendors`, `get_vulnerability`, `list_vulnerabilities`, `stats`.
+
+## Quickstart
 
 ```bash
+git clone https://github.com/EranDaniel98/vendors_homework.git
+cd vendors_homework
 npm install
-```
-
-## Run
-
-Development (no build, runs TypeScript directly):
-
-```bash
-npm start
-```
-
-Production (compile to `dist/`, then run):
-
-```bash
 npm run build
 node dist/index.js
 ```
 
-Tests, lint, formatter:
+The server speaks stdio — it isn't useful on its own. Point an MCP client at the built `dist/index.js`; see [Claude Desktop integration (Phase 2)](#claude-desktop-integration-phase-2) for the exact config block.
 
-```bash
-npm test
-npm run lint
-npm run format
-```
+## Table of contents
 
-On startup the server logs `ready {vendors,vulns}` to **stderr** and listens on **stdin/stdout** for JSON-RPC traffic. Nothing is ever written to stdout by application code — stdout is reserved for the MCP protocol.
-
-## Environment variables
-
-All tunables are validated at startup via zod; unknown values produce a fatal error with the offending key named.
-
-| Name | Default | Purpose |
-|---|---|---|
-| `VULN_DB_DIR` | `<repo-root>/data` | Directory containing the data files. Overrides path resolution for both files at once. |
-| `VENDORS_FILE` | `vendors.db` | Filename of the vendor master (relative to `VULN_DB_DIR`). |
-| `VULNS_FILE` | `vulnerabilities.db` | Filename of the vulnerability list. |
-| `SERVER_NAME` | `vulnerability-registry` | `name` field advertised to MCP clients. |
-| `SERVER_VERSION` | `1.0.0` | `version` field advertised to MCP clients. |
-| `DEFAULT_PAGE_LIMIT` | `50` | Default `limit` applied to list tools when the caller doesn't specify one. |
-| `MAX_PAGE_LIMIT` | `500` | Upper clamp on any caller-supplied `limit`. |
-| `LOG_LEVEL` | `info` | One of `silent`, `error`, `info`, `debug`. Log output goes to **stderr** only. |
-
-`src/config.ts` is the **only** file permitted to read `process.env` — this is enforced by an ESLint rule (`no-restricted-properties` on `process.env` everywhere except `src/config.ts`). If you want to add a setting, extend the zod schema there.
+- [Quickstart](#quickstart)
+- [Tools](#tools)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [Example questions](#example-questions)
+- [Claude Desktop integration (Phase 2)](#claude-desktop-integration-phase-2)
+- [Design notes](#design-notes)
+- [With more time](#with-more-time)
+- [Known limitations](#known-limitations)
 
 ## Tools
 
-Five tools are exposed. Each returns a dual-shape response: a pretty-printed JSON `text` block for human/Claude-Desktop rendering and a `structuredContent` object (under a `result` key) for clients that consume the MCP 2025-06 structured-content extension.
+All tools return a dual-shape response: a pretty-printed JSON `text` block for human/Claude-Desktop rendering, plus a `structuredContent.result` object for clients that consume the MCP 2025-06 structured-content extension. List tools return `{ items, total, limit, offset }`; all string filters use case-insensitive substring matching unless noted otherwise.
 
 ### `get_vendor`
 
-Fetch a single vendor by primary id.
+Fetch a single vendor by its primary id.
 
-| Param | Type | Req | Notes |
+| Param | Type | Required | Notes |
 |---|---|---|---|
-| `vendor_id` | string | yes | e.g. `"V1"` |
+| `vendor_id` | string | yes | Vendor primary key, e.g. `"V1"` |
 
-Error shape: `{ isError: true }` with a `Not found: vendor_id=...` message if the id is unknown.
+**Returns:** the vendor record as a single object under `result`.
+**Errors:** `isError: true` with `Not found: vendor_id=...` when the id is unknown; zod `-32602` for schema violations.
 
 ### `list_vendors`
 
-List vendors with optional filters. Pagination clamps to `MAX_PAGE_LIMIT`.
+List vendors, optionally filtered by category or name substring.
 
-| Param | Type | Notes |
-|---|---|---|
-| `category` | string | Exact match, case-insensitive |
-| `name_contains` | string | Substring, case-insensitive |
-| `limit`, `offset` | number | Pagination |
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `category` | string | no | Filter by category |
+| `name_contains` | string | no | Substring match on vendor name |
+| `limit` | integer | no | Max items to return (clamped to `MAX_PAGE_LIMIT`) |
+| `offset` | integer | no | Page offset (>= 0) |
+
+**Returns:** `{ items, total, limit, offset }` under `result`.
+**Errors:** zod `-32602` for protocol errors (e.g. unknown top-level keys, wrong types); never `isError` for empty matches.
 
 ### `get_vulnerability`
 
-Fetch a single vulnerability by internal id **or** by official CVE id. Provide exactly one.
+Fetch a single vulnerability by internal id or by official CVE id — provide exactly one.
 
-| Param | Type | Notes |
-|---|---|---|
-| `id` | string | Internal record id, e.g. `"CVE001"` |
-| `cve_id` | string | Official CVE identifier, e.g. `"CVE-2021-44228"` |
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `id` | string | no\* | Internal record id, e.g. `"CVE001"` |
+| `cve_id` | string | no\* | Official CVE identifier, e.g. `"CVE-2021-44228"` |
 
-For name/title searches ("Log4Shell", "PrintNightmare") use `list_vulnerabilities` with `title_contains` — the tool description reinforces this to the LLM to avoid a common miss-pick.
+\* Exactly one of `id` or `cve_id` must be supplied.
+
+**Returns:** the vulnerability record with inlined `vendor` metadata (`id`, `name`, `category`) under `result`.
+**Errors:** `isError: true` with `Provide exactly one of { id, cve_id }.` when both or neither are given; `isError: true` with `Not found: ...` when no record matches; zod `-32602` for schema violations.
 
 ### `list_vulnerabilities`
 
-Search/filter the full vulnerability list. Vendor metadata (`id`, `name`, `category`) is inlined under `vendor` on every result — saves the LLM a follow-up `get_vendor` call.
+Search and filter vulnerabilities with sort and pagination; vendor metadata is inlined on every item.
 
-| Param | Type | Notes |
-|---|---|---|
-| `vendor_id` | string | Exact |
-| `vendor_name` | string | Case-insensitive substring match on vendor name |
-| `severity` | enum | `critical` \| `high` \| `medium` \| `low` (case-insensitive) |
-| `status` | enum | `open` \| `patched` (case-insensitive) |
-| `title_contains` | string | Substring on title |
-| `cve_contains` | string | Substring on CVE id |
-| `affected_versions_contains` | string | Substring on free-text version field |
-| `min_cvss`, `max_cvss` | number | 0–10 |
-| `published_after`, `published_before` | ISO date | Inclusive |
-| `year` | number | Published year |
-| `sort_by` | enum | `published` \| `cvss_score` |
-| `sort_order` | enum | `asc` \| `desc` (default `desc`) |
-| `limit`, `offset` | number | Pagination |
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `vendor_id` | string | no | Exact vendor id match |
+| `vendor_name` | string | no | Case-insensitive substring match on vendor name |
+| `severity` | enum | no | `critical` \| `high` \| `medium` \| `low` (case-insensitive) |
+| `status` | enum | no | `open` \| `patched` (case-insensitive) |
+| `title_contains` | string | no | Case-insensitive substring match on title |
+| `cve_contains` | string | no | Case-insensitive substring match on CVE id |
+| `affected_versions_contains` | string | no | Substring match in the free-text `affected_versions` field |
+| `min_cvss` | number | no | 0–10 |
+| `max_cvss` | number | no | 0–10 |
+| `published_after` | date | no | Inclusive lower bound (YYYY-MM-DD or ISO) |
+| `published_before` | date | no | Inclusive upper bound (YYYY-MM-DD or ISO) |
+| `year` | integer | no | Filter by published year |
+| `sort_by` | enum | no | `published` \| `cvss_score` |
+| `sort_order` | enum | no | `asc` \| `desc` |
+| `limit` | integer | no | Max items to return (clamped to `MAX_PAGE_LIMIT`) |
+| `offset` | integer | no | Page offset (>= 0) |
 
-Empty match is **not** an error; returns `{ items: [], total: 0 }`.
+**Returns:** `{ items, total, limit, offset }` under `result`, each item with inlined `vendor`.
+**Errors:** zod `-32602` for protocol errors (unknown keys, invalid enum, bad date, CVSS out of range); empty matches return `{ items: [], total: 0 }`, not an error.
 
 ### `stats`
 
-Count vulnerabilities grouped by a facet, with the same filters as `list_vulnerabilities` (minus pagination/sort). The tool description tells the LLM: *"Use this for ALL 'how many' / count questions"* — much cheaper than fetching records and counting client-side.
+Count vulnerabilities grouped by a facet, using the same filter set as `list_vulnerabilities` (no sort/pagination).
 
-| Param | Type | Notes |
-|---|---|---|
-| `group_by` | enum | `severity` \| `status` \| `vendor` \| `year` |
-| `filters` | object | Same shape as `list_vulnerabilities` filters, sans `sort_*`/`limit`/`offset` |
+| Param | Type | Required | Notes |
+|---|---|---|---|
+| `group_by` | enum | yes | `severity` \| `status` \| `vendor` \| `year` |
+| `filters` | object | no | Subset of `list_vulnerabilities` filters: `vendor_id`, `vendor_name`, `severity`, `status`, `title_contains`, `cve_contains`, `min_cvss`, `max_cvss`, `published_after`, `published_before`, `year` |
 
-Returns `{ total, group_by, groups: [{ key, count }] }` sorted by count desc.
+**Returns:** `{ total, group_by, groups: [{ key, count }] }` under `result`, sorted by count desc.
+**Errors:** zod `-32602` for protocol errors (missing `group_by`, unknown keys in `filters`, invalid enum or date).
 
-## Example questions the tool surface answers
+## Architecture
 
-- *"How many critical vulnerabilities are still open?"* → `stats({ group_by: 'severity', filters: { status: 'open' } })`
-- *"Which CVEs were found in the Linux Kernel in the past year?"* → `list_vulnerabilities({ vendor_name: 'Linux', published_after: '2025-04-15' })`
-- *"What's the CVSS score of Log4Shell?"* → `list_vulnerabilities({ title_contains: 'Log4Shell' })`
-- *"Highest-CVSS unpatched vulnerability"* → `list_vulnerabilities({ status: 'open', sort_by: 'cvss_score', sort_order: 'desc', limit: 1 })`
-- *"Microsoft's 3 most recent CVEs"* → `list_vulnerabilities({ vendor_id: 'V1', sort_by: 'published', sort_order: 'desc', limit: 3 })`
+### Project layout
 
-## Design notes
+```
+vendors_homework/
+  src/                               — TypeScript source for the MCP server
+    index.ts                         — entry point; boots store, wires stdio transport
+    config.ts                        — sole reader of process.env; exports config + stderr logger
+    parser.ts                        — parses pipe-delimited .db files using the # FORMAT: header
+    store.ts                         — in-memory VulnerabilityStore with Maps + secondary indexes
+    tools.ts                         — registers the 5 MCP tools and their zod input schemas
+    types.ts                         — shared domain types (Vendor, Vulnerability, enums)
+  data/                              — runtime data files loaded at startup
+    vendors.db                       — VENDOR records (id, name, category, hq, founded)
+    vulnerabilities.db               — VULN records, vendor_id FK into vendors.db
+  tests/                             — node --test suites (no extra runner)
+    fixtures/                        — small .db files for parser/store tests
+    parser.test.ts                   — header parsing + row splitting + BOM/CRLF
+    store.test.ts                    — load, filter, sort, stats, pagination
+    tools.test.ts                    — full MCP round-trip via in-memory transport
+  docs/                              — specs and design notes
+    english_instruction.md           — authoritative homework spec
+    hebrew_instruction.md            — mirror of spec (HE)
+    DECISIONS.md                     — architecture decision log
+  claude_desktop_config.sample.json  — example MCP client config for Claude Desktop
+  package.json / tsconfig.json       — scripts + deps + TS compiler config (ESM, NodeNext)
+  eslint.config.js / .prettierrc     — lint + format config
+  .github/workflows/ci.yml           — CI: lint + build + tests (Node 20 + 22)
+```
 
-Five focused tools instead of one generic `query` — the LLM picks from distinct semantic signatures rather than inventing a filter DSL. Vendor info is inlined into every vuln response to save round-trips. Every numeric / enum field is coerced at parse time so queries never do per-row conversion. The `# FORMAT:` header is parsed dynamically, and the spec's `# VERSION` field is surfaced — the parser never hardcodes column indexes. Strict-at-load, lenient-per-row: a missing header aborts startup, but a malformed data row is logged to stderr and skipped so one bad line can't brick the server.
+### Request flow
 
-The full rationale — including options considered and rejected — lives in [`docs/DECISIONS.md`](./docs/DECISIONS.md).
+```
+stdin (JSON-RPC)
+    |
+    v
+[StdioServerTransport] --> [McpServer: index.ts]
+                                |
+                                v
+                        [tools.ts: zod-validated handler]
+                                |
+                                v
+                        [store.ts: VulnerabilityStore]
+                                |
+                                v
+   in-memory Maps: vendors, vulns, byCve, byVendor, bySeverity, byStatus
+                                |
+                                v
+                        [tools.ts: shape JSON response]
+                                |
+                                v
+                     stdout (JSON-RPC)     stderr (logs)
+```
 
-## With more time
+- Load-once at startup: both `.db` files are parsed into Maps in `VulnerabilityStore.load()`; no per-request re-reads.
+- Queries are O(1) point lookups (`getVendor`, `getVulnerability` by id/cve) or O(n) scans over pre-bucketed secondary indexes (`byVendor`, `bySeverity`, `byStatus`).
+- stdout is reserved for JSON-RPC frames; all logging goes to stderr via `logger` in `config.ts`.
+- Only `src/config.ts` reads `process.env` — everything else receives values through the exported `config` object.
 
-1. `sort_by` + metadata filters on `list_vendors` (`founded_before`, `hq_contains`) to unblock "vendors founded before 1990" in a single call.
-2. `category` as a `stats.group_by` facet — answers "which category has the most CVEs."
-3. A proper product/CPE layer. The current data has only vendor + free-text `affected_versions`; a real registry would normalize to CPE identifiers.
-4. MCP `resources/*` support — expose each CVE as a URI the LLM can attach to conversation context.
-5. A small alias map for "Log4Shell" → `CVE-2021-44228`, "Heartbleed" → `CVE-2014-0160`, etc., to close the biggest tool-picking risk.
-6. Integration tests that spawn the server as a real child process and round-trip `tools/list` + `tools/call` over stdio. (The in-memory transport covers the API surface today; the child-process test would catch transport-layer regressions.)
-7. Structured JSON-lines logs to stderr instead of the current plain strings, for observability when run as a managed service.
+## Configuration
+
+Environment variables are validated at startup via zod (see `src/config.ts`); invalid values abort the process with a descriptive error. `src/config.ts` is the only file permitted to read `process.env` — enforced by an ESLint `no-restricted-properties` rule.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `VULN_DB_DIR` | `<repo>/data` | Directory containing the two `.db` files. Resolved to an absolute path. |
+| `VENDORS_FILE` | `vendors.db` | Vendor master filename, resolved relative to `VULN_DB_DIR`. |
+| `VULNS_FILE` | `vulnerabilities.db` | Vulnerability records filename, resolved relative to `VULN_DB_DIR`. |
+| `SERVER_NAME` | `vulnerability-registry` | MCP server name advertised on the initialize handshake. |
+| `SERVER_VERSION` | `1.0.0` | MCP server version advertised on the initialize handshake. |
+| `DEFAULT_PAGE_LIMIT` | `50` | Page size used when a tool call omits `limit`. |
+| `MAX_PAGE_LIMIT` | `500` | Hard ceiling for `limit`; larger values are clamped. |
+| `LOG_LEVEL` | `info` | One of `silent`, `error`, `info`, `debug`. Logs go to stderr. |
+
+## Example questions
+
+Sample answers below are grounded in the actual `data/*.db` shipped with the repo.
+
+1. *"How many critical vulnerabilities are still open?"*
+   `stats({ group_by: 'severity', filters: { status: 'open' } })`
+   → `groups` includes `{ key: 'critical', count: 2 }` (CVE-2024-27198 TeamCity, CVE-2024-21762 Fortinet).
+
+2. *"What's the CVSS score of Log4Shell?"*
+   `list_vulnerabilities({ title_contains: 'Log4Shell' })`
+   → 1 match, CVE-2021-44228, `cvss_score: 10.0`, vendor Apache Software Foundation, status patched.
+
+3. *"Which CVEs were found in the Linux Kernel?"*
+   `list_vulnerabilities({ vendor_name: 'Linux Kernel' })`
+   → 4 records — Dirty COW, Dirty Pipe, Linux Race Condition, Linux Netfilter UAF.
+
+4. *"Microsoft's 3 most recent CVEs?"*
+   `list_vulnerabilities({ vendor_name: 'Microsoft', sort_by: 'published', sort_order: 'desc', limit: 3 })`
+   → CVE-2024-27198 (2024-03-04), CVE-2021-34527 (2021-07-01), CVE-2021-1675 (2021-06-29).
+
+5. *"Which vendor has the most vulnerabilities?"*
+   `stats({ group_by: 'vendor' })`
+   → Microsoft leads with 5; Apache, Google, and Linux Kernel Organization each have 4; OpenSSL has 3.
 
 ## Claude Desktop integration (Phase 2)
 
-This is also the **Phase 2 agent client** deliverable. The spec lists Claude Desktop by name as one of the free LLM options that "connects directly to MCP Servers, no API key needed at all" — wiring it up as described below gives you the full natural-language analyst experience: ask *"how many critical vulnerabilities are still open?"* and Claude chooses the right tool, calls it, and synthesizes the answer. Multi-step questions that require chaining tools ("highest-CVSS unpatched Microsoft vuln") work too.
+This section is the Phase 2 deliverable: the task brief lists Claude Desktop by name as a free agent client option, and the steps below wire this server into it end-to-end.
 
-See [`claude_desktop_config.sample.json`](./claude_desktop_config.sample.json). Copy the `mcpServers.vulnerability-registry` entry into your `claude_desktop_config.json` (on Windows: `%APPDATA%\Claude\claude_desktop_config.json`; on macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`), replace `<ABSOLUTE_PATH_TO_REPO>` with the path to this repo, and fully quit + relaunch Claude Desktop. During development you can point the `command`/`args` at `npx tsx src/index.ts` instead of `node dist/index.js` to skip the build step.
+1. Build once: `npm install && npm run build`.
+2. Open Claude Desktop's config file:
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+3. Copy the `mcpServers.vulnerability-registry` block from `claude_desktop_config.sample.json` (at the repo root) into that file, merging under any existing `mcpServers` key.
+4. Replace `<ABSOLUTE_PATH_TO_REPO>` with the absolute path to your checkout (forward slashes work on both platforms).
+5. **Fully quit** Claude Desktop (Windows tray icon → Quit; macOS menu bar → Quit) and relaunch — MCP servers are only re-read on a cold start.
+
+Dev shortcut: swap `node dist/index.js` for `npx tsx src/index.ts` in the config to skip the build step on every change.
+
+### Verify it works
+
+1. `vulnerability-registry` appears in Claude Desktop's tools/plug icon list.
+2. `tools/list` (via MCP Inspector or the client) shows 5 tools.
+3. Asking *"how many critical vulnerabilities are still open?"* returns a number (routed through `stats`).
+4. Multi-step questions like *"highest-CVSS unpatched Microsoft vuln"* resolve in one call via `list_vulnerabilities` with `vendor_name`, `status`, and `sort_by=cvss_score`.
+
+## Design notes
+
+- Five focused tools (`list_*`, `get_*`, `stats`) over a generic `query` — better LLM tool-picking than a filter DSL.
+- Vuln responses inline `vendor: { id, name, category }` — removes an LLM round-trip on the most common question shape.
+- Dynamic `# FORMAT:` parsing into a name-keyed row map — no hardcoded column indexes, honours the spec's `# VERSION` signal.
+- Strict-at-load, lenient-per-row parser — fail loudly on structural drift, skip and log a single malformed row.
+- `src/config.ts` is the only file allowed to touch `process.env`, enforced by an ESLint `no-restricted-properties` rule.
+
+See [`docs/DECISIONS.md`](./docs/DECISIONS.md) for the full decision log with alternatives considered and tradeoffs accepted.
+
+## With more time
+
+1. Add `sort_by` + metadata filters on `list_vendors` (`founded_before`, `hq_contains`) to answer "vendors founded before 1990" in one call.
+2. Expose `category` as a `stats.group_by` facet to answer "which category has the most CVEs".
+3. Add a product/CPE layer, since current data has no product entity — only vendor plus free-text `affected_versions`.
+4. Add MCP `resources/*` support to expose each CVE as a URI the LLM can attach to context.
+5. Ship an alias map ("Log4Shell" → `CVE-2021-44228`, etc.) to close the biggest tool-picking risk.
 
 ## Known limitations
 
-- **No `affected_versions` range parsing.** Free-text field per the spec; we expose `affected_versions_contains` (substring) only. Parsing `"Chrome < 88.0.4324.150"` into structured ranges is a rabbit hole.
+- **No `affected_versions` range parsing.** Free-text field per spec; `affected_versions_contains` is substring only.
 - **No hot-reload.** Files load once at startup; restart to re-read.
-- **Substring search only.** No fuzzy / trigram / full-text index. At 10k rows `.toLowerCase().includes()` finishes in microseconds — when that stops being true, add a proper index.
+- **Substring search only.** No fuzzy or full-text index; sub-millisecond at 10k rows, revisit when it stops being.
