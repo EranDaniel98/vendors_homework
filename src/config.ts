@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+const defaultDbDir = path.resolve(repoRoot, 'data');
 
 const LogLevelSchema = z.enum(['silent', 'error', 'info', 'debug']);
 type LogLevel = z.infer<typeof LogLevelSchema>;
@@ -32,7 +33,7 @@ try {
   throw err;
 }
 
-const dbDir = path.resolve(parsed.VULN_DB_DIR ?? repoRoot);
+const dbDir = path.resolve(parsed.VULN_DB_DIR ?? defaultDbDir);
 
 export const config = {
   repoRoot,
