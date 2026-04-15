@@ -147,13 +147,14 @@ The full rationale — including options considered and rejected — lives in [`
 6. Integration tests that spawn the server as a real child process and round-trip `tools/list` + `tools/call` over stdio. (The in-memory transport covers the API surface today; the child-process test would catch transport-layer regressions.)
 7. Structured JSON-lines logs to stderr instead of the current plain strings, for observability when run as a managed service.
 
-## Claude Desktop integration
+## Claude Desktop integration (Phase 2)
 
-See [`claude_desktop_config.sample.json`](./claude_desktop_config.sample.json). Copy the `mcpServers.vulnerability-registry` entry into your `claude_desktop_config.json` (on Windows: `%APPDATA%\Claude\claude_desktop_config.json`), replace `<ABSOLUTE_PATH>` with the path to this repo, and restart Claude Desktop. During development you can point the `command`/`args` at `npx tsx src/index.ts` instead of `node dist/index.js` to skip the build step.
+This is also the **Phase 2 agent client** deliverable. The spec lists Claude Desktop by name as one of the free LLM options that "connects directly to MCP Servers, no API key needed at all" — wiring it up as described below gives you the full natural-language analyst experience: ask *"how many critical vulnerabilities are still open?"* and Claude chooses the right tool, calls it, and synthesizes the answer. Multi-step questions that require chaining tools ("highest-CVSS unpatched Microsoft vuln") work too.
+
+See [`claude_desktop_config.sample.json`](./claude_desktop_config.sample.json). Copy the `mcpServers.vulnerability-registry` entry into your `claude_desktop_config.json` (on Windows: `%APPDATA%\Claude\claude_desktop_config.json`; on macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`), replace `<ABSOLUTE_PATH_TO_REPO>` with the path to this repo, and fully quit + relaunch Claude Desktop. During development you can point the `command`/`args` at `npx tsx src/index.ts` instead of `node dist/index.js` to skip the build step.
 
 ## Known limitations
 
 - **No `affected_versions` range parsing.** Free-text field per the spec; we expose `affected_versions_contains` (substring) only. Parsing `"Chrome < 88.0.4324.150"` into structured ranges is a rabbit hole.
 - **No hot-reload.** Files load once at startup; restart to re-read.
 - **Substring search only.** No fuzzy / trigram / full-text index. At 10k rows `.toLowerCase().includes()` finishes in microseconds — when that stops being true, add a proper index.
-- **No CI.** Submission is a public repo only; there's no deployment target.
