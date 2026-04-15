@@ -184,3 +184,41 @@ test('stats with filters scopes the count', async () => {
     await close();
   }
 });
+
+test('list_vendors with name_contains filter', async () => {
+  const { client, close } = await setup();
+  try {
+    const res = await call(client, 'list_vendors', { name_contains: 'acme' });
+    const parsed = JSON.parse(res.content?.[0]?.text ?? '');
+    assert.equal(parsed.total, 1);
+    assert.equal(parsed.items[0].id, 'V1');
+  } finally {
+    await close();
+  }
+});
+
+test('list_vulnerabilities with date range filter', async () => {
+  const { client, close } = await setup();
+  try {
+    const res = await call(client, 'list_vulnerabilities', {
+      published_after: '2024-01-01',
+      published_before: '2024-12-31',
+    });
+    const parsed = JSON.parse(res.content?.[0]?.text ?? '');
+    for (const v of parsed.items) {
+      assert.ok(v.published >= '2024-01-01' && v.published <= '2024-12-31');
+    }
+  } finally {
+    await close();
+  }
+});
+
+test('list_vulnerabilities severity enum rejects invalid values', async () => {
+  const { client, close } = await setup();
+  try {
+    const res = await call(client, 'list_vulnerabilities', { severity: 'super-bad' });
+    assert.equal(res.isError, true);
+  } finally {
+    await close();
+  }
+});
