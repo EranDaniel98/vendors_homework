@@ -1,0 +1,9 @@
+# METADATA
+# FORMAT: type|id|name|category|hq|founded
+# VERSION: 1.0
+
+VENDOR|V1|Microsoft|Software|Redmond, WA|1975
+VENDOR|V2|Apache Software Foundation|Open Source|Wilmington, DE|1999
+VENDOR|V3|OpenSSL Project|Open Source|Worldwide|1998
+VENDOR|V4|Google|Software|Mountain View, CA|1998
+VENDOR|V5|Linux Kernel Organization|Open Source|San Francisco, CA|1991

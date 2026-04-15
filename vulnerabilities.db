@@ -1,0 +1,24 @@
+# METADATA
+# FORMAT: type|id|cve_id|title|vendor_id|severity|cvss_score|affected_versions|status|published
+# VERSION: 1.0
+
+VULN|CVE001|CVE-2021-44228|Log4Shell|V2|critical|10.0|2.0-2.14.1|patched|2021-12-10
+VULN|CVE002|CVE-2022-22965|Spring4Shell|V2|critical|9.8|5.3.0-5.3.17|patched|2022-03-31
+VULN|CVE003|CVE-2021-41773|Path Traversal in Apache HTTP|V2|critical|9.8|2.4.49|patched|2021-10-05
+VULN|CVE004|CVE-2014-0160|Heartbleed|V3|high|7.5|1.0.1-1.0.1f|patched|2014-04-07
+VULN|CVE005|CVE-2014-3566|POODLE|V3|medium|3.4|SSLv3|patched|2014-10-14
+VULN|CVE006|CVE-2023-0286|OpenSSL Type Confusion|V3|high|7.4|1.0.2-3.0.7|patched|2023-02-07
+VULN|CVE007|CVE-2017-0144|EternalBlue|V1|critical|9.8|Windows 7-2008 R2|patched|2017-03-14
+VULN|CVE008|CVE-2021-1675|PrintNightmare|V1|critical|8.8|Windows 10-Server 2019|patched|2021-06-29
+VULN|CVE009|CVE-2019-0708|BlueKeep|V1|critical|9.8|Windows 7-Server 2008|patched|2019-05-14
+VULN|CVE010|CVE-2021-34527|PrintNightmare RCE|V1|critical|8.8|Windows Server 2019|patched|2021-07-01
+VULN|CVE011|CVE-2021-21148|Chrome V8 Heap Overflow|V4|high|8.8|Chrome < 88.0.4324.150|patched|2021-02-04
+VULN|CVE012|CVE-2022-0609|Chrome Animation UAF|V4|high|8.8|Chrome < 98.0.4758.102|patched|2022-02-14
+VULN|CVE013|CVE-2023-2033|Chrome V8 Type Confusion|V4|high|8.8|Chrome < 112.0.5615.121|patched|2023-04-14
+VULN|CVE014|CVE-2016-5195|Dirty COW|V5|high|7.8|Linux kernel < 4.8.3|patched|2016-10-19
+VULN|CVE015|CVE-2022-0847|Dirty Pipe|V5|high|7.8|Linux kernel 5.8-5.16.10|patched|2022-03-07
+VULN|CVE016|CVE-2023-35829|Linux Race Condition|V5|high|7.0|Linux kernel < 6.3.2|open|2023-06-18
+VULN|CVE017|CVE-2024-1086|Linux Netfilter UAF|V5|high|7.8|Linux kernel 5.14-6.6|open|2024-01-31
+VULN|CVE018|CVE-2023-44487|HTTP/2 Rapid Reset|V2|high|7.5|Apache HTTP 2.4.x|patched|2023-10-10
+VULN|CVE019|CVE-2024-27198|TeamCity Auth Bypass|V1|critical|9.8|TeamCity < 2023.11.4|open|2024-03-04
+VULN|CVE020|CVE-2024-21762|Fortinet SSL VPN OOB|V4|critical|9.6|FortiOS 6.0-7.4|open|2024-02-08
